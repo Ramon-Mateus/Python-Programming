@@ -1,6 +1,8 @@
 import os
 import json
 import zipfile
+import tempfile
+import shutil
 from django.conf import settings
 from django.forms.models import model_to_dict
 from django.core.management.base import BaseCommand
@@ -19,22 +21,13 @@ class CustomJSONEncoder(DjangoJSONEncoder):
 class Command(BaseCommand):
     
     def handle(self, *args, **options):
-        # solicitacoes = Solicitacao.objects.all()
+        solicitacoes = Solicitacao.objects.all()
         
-        # for solicitacao in solicitacoes:
-            
-        #     data = self.dumpSolicitacao(solicitacao)
-        #     documentos = Documento.objects.filter(solicitacao=solicitacao)
-        #     self.create_zip_file(data, documentos, solicitacao.selecionado.chamada.edital.identificacao, solicitacao.selecionado.cpf)
-        
-        solicitacao = Solicitacao.objects.first()
-        data = self.dumpSolicitacao(solicitacao)
-        documentos = Documento.objects.filter(solicitacao=solicitacao)
-        edital = solicitacao.selecionado.chamada.edital.identificacao
-        selecionado_cpf = solicitacao.selecionado.cpf
-        self.create_zip_file(data, documentos, edital, selecionado_cpf)
+        for solicitacao in solicitacoes:
+            data = self.dictSolicitacao(solicitacao)
+            self.create_zip_file(data, solicitacao)
 
-    def dumpSolicitacao(self, solicitacao):
+    def dictSolicitacao(self, solicitacao):
         data = model_to_dict(solicitacao)
 
         documentos_exigidos = DocumentoExigido.objects.filter(edital=solicitacao.selecionado.chamada.edital)
@@ -52,6 +45,7 @@ class Command(BaseCommand):
         for documento in documentos:
             documento_data = model_to_dict(documento)
             documento_data['arquivo'] = documento.arquivo.path
+            documento_data['existe'] = os.path.exists(documento_data['arquivo'])
             documentos_data.append(documento_data)
         
         data['selecionado'] = model_to_dict(solicitacao.selecionado)
@@ -94,100 +88,21 @@ class Command(BaseCommand):
         data['ano_conclusao_estudo_anterior'] = model_to_dict(solicitacao.ano_conclusao_estudo_anterior)
         data['tipo_certidao'] = model_to_dict(solicitacao.tipo_certidao)
         data['documentos'] = documentos_data
-        json_data = json.dumps(data, cls=CustomJSONEncoder, indent = 4)
         
-        return json_data
-        # print(json_data)
+        return data
 
-
-
-
-        # # Especifica o caminho do arquivo onde o JSON será salvo
-        # caminho_atual = os.getcwd()
-        # caminho_arquivo = os.path.join(caminho_atual, 'data.json')
-
-        # # Salva o JSON no arquivo
-        # with open(caminho_arquivo, 'w') as arquivo:
-        #     arquivo.write(json_data)
-
-
-
-
-
-        # Apenas para teste
-        # solicitacoes = Solicitacao.objects.all()
+    def create_zip_file(self, data_dict, solicitacao):
         
-        # for solicitaca in solicitacoes:
-        #     if (solicitaca.selecionado.nacionalidade == None):
-        #         data = model_to_dict(solicitaca)
-        #         data = model_to_dict(solicitaca)
-        #         data['utiliza_transporte_escolar_publico'] = model_to_dict(solicitaca.utiliza_transporte_escolar_publico)
-        #         # data['linha_pesquisa'] = model_to_dict(solicitaca.linha_pesquisa) if solicitaca.linha_pesquisa != None else None
-        #         break
+        identificacao = solicitacao.selecionado.chamada.edital.identificacao.replace("/", "_").replace(" ", "_")
+        docs_dir = os.path.join(settings.EXPORTED_DIR, 'temporario')
+        os.mkdir(docs_dir)
+        with open(os.path.join(docs_dir, f"solicitacao.json"), "w") as f:
+            json.dump(data_dict, f, cls=CustomJSONEncoder, indent=4)
 
-
-
-
-
-
-
-
-
-
-
-
-
-        # for solicitacao in Solicitacao.objects.all():
-        #     numero_edital = solicitacao.selecionado.chamada.edital.numero
-        #     pasta_edital = os.path.join(settings.MEDIA_ROOT, numero_edital)
-        #     os.makedirs(pasta_edital, exist_ok=True)
-            
-        #     # Cria um dicionário com os dados da solicitação
-        #     dados_solicitacao = model_to_dict(solicitacao)
-            
-        #     # Caminho para o arquivo JSON
-        #     json_path = os.path.join(pasta_edital, 'dados.json')
-            
-        #     # Salva os dados da solicitação no arquivo JSON
-        #     with open(json_path, 'w') as f:
-        #         json.dump(dados_solicitacao, f)
-            
-        #     # Cria uma pasta para os arquivos da solicitação
-        #     pasta_solicitacao = os.path.join(pasta_edital, str(solicitacao.id))
-        #     os.makedirs(pasta_solicitacao, exist_ok=True)
-            
-        #     # Copia os arquivos para a pasta da solicitação
-        #     for documento in solicitacao.documentos.all():
-        #         origem = documento.arquivo.path
-        #         destino = os.path.join(pasta_solicitacao, os.path.basename(origem))
-        #         shutil.copyfile(origem, destino)
-            
-        #     # Comprime a pasta em um arquivo ZIP
-        #     zip_path = shutil.make_archive(pasta_edital, 'zip', pasta_edital)
-            
-        #     # Remove a pasta do edital
-        #     shutil.rmtree(pasta_edital)
-            
-        #     # O processo recomeça com o próximo edital
-
-    def create_zip_file(self, data, documentos, edital_numero, selecionado_cpf):
-        # Criar o diretório para armazenar o arquivo ZIP
-        zip_dir = os.path.join(settings.MEDIA_ROOT, 'zip_files')
-        os.makedirs(zip_dir, exist_ok=True)
-
-        # Criar um arquivo ZIP
-        zip_file_path = os.path.join(zip_dir, f'{edital_numero}.zip')
-        with zipfile.ZipFile(zip_file_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            # Salvar os dados recebidos como um arquivo JSON dentro do ZIP
-            json_data = json.dumps(data, indent=4)
-            zip_file.writestr(f'{selecionado_cpf}.json', json_data)
-
-            # Adicionar os arquivos de documentos ao ZIP
-            for documento in documentos:
-                if documento.arquivo:
-                    file_path = documento.arquivo.path
-                    file_name = os.path.basename(file_path)
-                    zip_file.write(file_path, file_name)
-
-        # Retorna o caminho do arquivo ZIP gerado
-        # return zip_file_path
+        for documento in data_dict['documentos']:
+            if documento['existe']:
+                shutil.copy2(documento['arquivo'], docs_dir)
+                
+        zipfilename = os.path.join(settings.EXPORTED_DIR, f"{identificacao}_{solicitacao.selecionado.cpf}")
+        shutil.make_archive(zipfilename, "zip", docs_dir)
+        shutil.rmtree(docs_dir)
